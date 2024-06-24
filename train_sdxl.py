@@ -1777,7 +1777,6 @@ def main():
                     # upstream TODO: weighting sceme needs to be experimented with :)
                     # these weighting schemes use a uniform timestep sampling
                     # and instead post-weight the loss
-                    """
                     if args.weighting_scheme == "sigma_sqrt":
                         weighting = (sigmas**-2.0).float()
                     elif args.weighting_scheme == "cosmap":
@@ -1785,6 +1784,7 @@ def main():
                         weighting = 2 / (math.pi * bot)
                     else:
                         weighting = torch.ones_like(sigmas)
+                    """
                     loss = torch.mean(
                         (
                             weighting.float()
@@ -1802,7 +1802,7 @@ def main():
 
                     loss = torch.mean(
                         (
-                            torch.abs(model_pred.float() - target.float())
+                            weighting.float() * torch.abs(model_pred.float() - target.float())
                         ).reshape(target.shape[0], -1),
                         1,
                     ).mean()
