@@ -541,7 +541,7 @@ training = ["Jinja2", "accelerate (>=0.29.3)", "datasets", "peft (>=0.6.0)", "pr
 
 [package.source]
 type = "git"
-url = "https://github.com/huggingface/diffusers"
+url = "https://github.com/Disty0/diffusers"
 reference = "HEAD"
 resolved_reference = "f96e4a16adb4c31bab4c0a3d0d145ed2b086ecb0"
 
