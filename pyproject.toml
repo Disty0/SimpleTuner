@@ -49,7 +49,7 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [[tool.poetry.source]]
-priority = "secondary"
+priority = "supplemental"
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu121"
 
