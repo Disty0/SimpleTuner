@@ -199,6 +199,9 @@ class LocalDataBackend(BaseDataBackend):
         else:
             location = original_location
 
+        if len(data) == 16:
+            data = data.clone()
+
         if self.compress_cache:
             compressed_data = self._compress_torch(data)
             location.write(compressed_data)
