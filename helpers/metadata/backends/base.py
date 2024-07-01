@@ -448,9 +448,10 @@ class MetadataBackend:
             bucket in self.aspect_ratio_bucket_indices
             and len(self.aspect_ratio_bucket_indices[bucket]) < self.batch_size
         ):
+            sample_count = len(self.aspect_ratio_bucket_indices[bucket])
             del self.aspect_ratio_bucket_indices[bucket]
             logger.warning(
-                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={len(self.aspect_ratio_bucket_indices[bucket])})."
+                f"Removing bucket {bucket} due to insufficient samples; your batch size may be too large for the small quantity of data (batch_size={self.batch_size} > sample_count={sample_count})."
             )
 
     def _enforce_resolution_constraints(self, bucket):
@@ -476,7 +477,7 @@ class MetadataBackend:
             total_after = len(self.aspect_ratio_bucket_indices[bucket])
             total_lost = total_before - total_after
             logger.info(
-                f"Had {total_before} samples before and {total_after} that did not meet the minimum image size requirement ({self.minimum_image_size})."
+                f"Had {total_before} samples before and {total_after} after. There are {total_lost} images that did not meet the minimum image size requirement ({self.minimum_image_size})."
             )
 
     def meets_resolution_requirements(
