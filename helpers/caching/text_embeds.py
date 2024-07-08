@@ -32,7 +32,7 @@ def _encode_sd3_prompt_with_t5(
     text_inputs = tokenizer(
         prompt,
         padding="max_length",
-        max_length=77,
+        max_length=154,
         truncation=True,
         add_special_tokens=True,
         return_tensors="pt",

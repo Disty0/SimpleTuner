@@ -1862,6 +1862,7 @@ def main():
                         weighting = 2 / (math.pi * bot)
                     else:
                         weighting = torch.ones_like(sigmas)
+                    """
                     loss = torch.mean(
                         (
                             weighting.float()
@@ -1870,6 +1871,19 @@ def main():
                         1,
                     )
                     loss = loss.mean()
+                    """
+
+                    # square makes too much difference between bigger and smaller values and smaller values gets lost
+                    # 0.0001 ** 2 = 0.00000001
+                    # 0.001  ** 2 = 0.000001
+                    # 0.01   ** 2 = 0.0001
+
+                    loss = torch.mean(
+                        (
+                            weighting.float() * torch.abs(model_pred.float() - target.float())
+                        ).reshape(target.shape[0], -1),
+                        1,
+                    ).mean()
 
                 elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug(f"Calculating loss")

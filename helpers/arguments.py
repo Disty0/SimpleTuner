@@ -122,7 +122,7 @@ def parse_args(input_args=None):
         "--weighting_scheme",
         type=str,
         default="logit_normal",
-        choices=["sigma_sqrt", "logit_normal", "mode"],
+        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap"],
         help=(
             "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
             " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
