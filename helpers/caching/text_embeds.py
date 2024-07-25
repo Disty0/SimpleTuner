@@ -33,7 +33,7 @@ def _encode_sd3_prompt_with_t5(
     text_inputs = tokenizer(
         prompt,
         padding="max_length",
-        max_length=77,
+        max_length=256,
         truncation=True,
         add_special_tokens=True,
         return_tensors="pt",
@@ -457,7 +457,7 @@ class TextEmbeddingCache:
         else:
             # prevent runaway token length sizes.
             # huge captions aren't very helpful, and if you want them, use --tokenizer_max_length
-            max_length = 144
+            max_length = 154
 
         text_inputs = self.tokenizers[0](
             prompt,

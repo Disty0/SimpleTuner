@@ -393,7 +393,12 @@ def main():
 
     # For mixed precision training we cast the text_encoder and vae weights to half-precision
     # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.bfloat16
+    if args.weight_precision == "fp32":
+        weight_dtype = torch.float32
+    elif args.weight_precision == "fp16":
+        weight_dtype = torch.float16
+    else:
+        weight_dtype = torch.bfloat16
     if torch.backends.mps.is_available() and "deepfloyd" in args.model_type:
         weight_dtype = torch.float32
         args.adam_bfloat16 = False
@@ -529,19 +534,29 @@ def main():
             variant=args.variant,
         )
 
+    te_dtype = torch.bfloat16
+    if args.te_dtype == "bf16":
+        te_dtype = torch.bfloat16
+    elif args.te_dtype == "fp16":
+        te_dtype = torch.float16
+    elif args.te_dtype == "fp32":
+        te_dtype = torch.float32
+    elif args.te_dtype == "none" or args.te_dtype == "default":
+        te_dtype = torch.bfloat16
+
     if tokenizer_1 is not None:
-        logger.info("Moving text encoder to GPU.")
-        text_encoder_1.to(accelerator.device, dtype=weight_dtype)
+        logger.info(f"Moving text encoder to GPU in {te_dtype} precision")
+        text_encoder_1.to(accelerator.device, dtype=te_dtype)
     if tokenizer_2 is not None:
-        logger.info("Moving text encoder 2 to GPU.")
-        text_encoder_2.to(accelerator.device, dtype=weight_dtype)
+        logger.info(f"Moving text encoder 2 to GPU in {te_dtype} precision")
+        text_encoder_2.to(accelerator.device, dtype=te_dtype)
     if tokenizer_1 is not None or tokenizer_2 is not None:
         tokenizers = [tokenizer_1, tokenizer_2]
         text_encoders = [text_encoder_1, text_encoder_2]
 
     if tokenizer_3 is not None:
-        logger.info("Moving text encoder 3 to GPU.")
-        text_encoder_3.to(accelerator.device, dtype=weight_dtype)
+        logger.info(f"Moving text encoder 3 to GPU in {te_dtype} precision")
+        text_encoder_3.to(accelerator.device, dtype=te_dtype)
         tokenizers = [tokenizer_1, tokenizer_2, tokenizer_3]
         text_encoders = [text_encoder_1, text_encoder_2, text_encoder_3]
 
@@ -778,9 +793,7 @@ def main():
         if args.vae_dtype == "bf16":
             vae_dtype = torch.bfloat16
         elif args.vae_dtype == "fp16":
-            raise ValueError(
-                "fp16 is not supported for SDXL's VAE. Please use bf16 or fp32."
-            )
+            vae_dtype = torch.float16
         elif args.vae_dtype == "fp32":
             vae_dtype = torch.float32
         elif args.vae_dtype == "none" or args.vae_dtype == "default":
@@ -861,6 +874,9 @@ def main():
             memory_before_unload = 0
         if accelerator.is_main_process:
             logger.info("Unloading text encoders, as they are not being trained.")
+        text_encoder_1 = text_encoder_1.to("meta") if text_encoder_1 is not None else None
+        text_encoder_2 = text_encoder_2.to("meta") if text_encoder_2 is not None else None
+        text_encoder_3 = text_encoder_3.to("meta") if text_encoder_3 is not None else None
         del text_encoder_1, text_encoder_2, text_encoder_3
         text_encoder_1 = None
         text_encoder_2 = None
@@ -1546,6 +1562,7 @@ def main():
     # Some values that are required to be initialised later.
     timesteps_buffer = []
     train_loss = 0.0
+    mae_loss = None
     grad_norm = None
     step = global_step
     training_luminance_values = []
@@ -1808,7 +1825,7 @@ def main():
                     if args.flow_matching_loss == "diffusers":
                         target = latents
                     elif args.flow_matching_loss == "compatible":
-                        target = noise - latents
+                        target = noise.float() - latents.float()
                 elif noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction" or (
@@ -1853,92 +1870,91 @@ def main():
                         f"Extra conditioning dtype: {batch['conditioning_pixel_values'].dtype}"
                     )
                 if not os.environ.get("SIMPLETUNER_DISABLE_ACCELERATOR", False):
-                    if args.controlnet:
-                        # ControlNet conditioning.
-                        controlnet_image = batch["conditioning_pixel_values"].to(
-                            dtype=weight_dtype
-                        )
-                        training_logger.debug(f"Image shape: {controlnet_image.shape}")
-                        down_block_res_samples, mid_block_res_sample = controlnet(
-                            noisy_latents,
-                            timesteps,
-                            encoder_hidden_states=encoder_hidden_states,
-                            added_cond_kwargs=added_cond_kwargs,
-                            controlnet_cond=controlnet_image,
-                            return_dict=False,
-                        )
-                        # Predict the noise residual
-                        if unet is not None:
-                            model_pred = unet(
+                    with accelerator.autocast():
+                        if args.controlnet:
+                            # ControlNet conditioning.
+                            controlnet_image = batch["conditioning_pixel_values"].to(
+                                dtype=weight_dtype
+                            )
+                            training_logger.debug(f"Image shape: {controlnet_image.shape}")
+                            down_block_res_samples, mid_block_res_sample = controlnet(
                                 noisy_latents,
                                 timesteps,
                                 encoder_hidden_states=encoder_hidden_states,
                                 added_cond_kwargs=added_cond_kwargs,
-                                down_block_additional_residuals=[
-                                    sample.to(dtype=weight_dtype)
-                                    for sample in down_block_res_samples
-                                ],
-                                mid_block_additional_residual=mid_block_res_sample.to(
-                                    dtype=weight_dtype
+                                controlnet_cond=controlnet_image,
+                                return_dict=False,
+                            )
+                            # Predict the noise residual
+                            if unet is not None:
+                                model_pred = unet(
+                                    noisy_latents,
+                                    timesteps,
+                                    encoder_hidden_states=encoder_hidden_states,
+                                    added_cond_kwargs=added_cond_kwargs,
+                                    down_block_additional_residuals=[
+                                        sample.to(dtype=weight_dtype)
+                                        for sample in down_block_res_samples
+                                    ],
+                                    mid_block_additional_residual=mid_block_res_sample.to(
+                                        dtype=weight_dtype
+                                    ),
+                                    return_dict=False,
+                                )[0]
+                            if transformer is not None:
+                                raise Exception(
+                                    "ControlNet predictions for transformer models are not yet implemented."
+                                )
+                        elif args.sd3:
+                            # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
+                            #  image embeds are passed in with the TE-produced text embeds.
+                            model_pred = transformer(
+                                hidden_states=noisy_latents,
+                                timestep=timesteps,
+                                encoder_hidden_states=encoder_hidden_states,
+                                pooled_projections=add_text_embeds.to(
+                                    device=accelerator.device, dtype=weight_dtype
                                 ),
                                 return_dict=False,
                             )[0]
-                        if transformer is not None:
-                            raise Exception(
-                                "ControlNet predictions for transformer models are not yet implemented."
-                            )
-                    elif args.sd3:
-                        # Stable Diffusion 3 uses a MM-DiT model where the VAE-produced
-                        #  image embeds are passed in with the TE-produced text embeds.
-                        model_pred = transformer(
-                            hidden_states=noisy_latents,
-                            timestep=timesteps,
-                            encoder_hidden_states=encoder_hidden_states,
-                            pooled_projections=add_text_embeds.to(
-                                device=accelerator.device, dtype=weight_dtype
-                            ),
-                            return_dict=False,
-                        )[0]
-                    elif args.aura_flow:
-                        # AuraFlow also uses a MM-DiT model where the VAE-produced
-                        #  image embeds are passed in with the TE-produced text embeds.
-                        # Print the dtypes/shapes:
-                        model_pred = transformer(
-                            hidden_states=noisy_latents,
-                            encoder_hidden_states=encoder_hidden_states,
-                            timestep=timesteps,
-                            return_dict=False,
-                        )[0]
-                    elif args.pixart_sigma:
-                        model_pred = transformer(
-                            noisy_latents,
-                            encoder_hidden_states=encoder_hidden_states,
-                            encoder_attention_mask=batch["encoder_attention_mask"],
-                            timestep=timesteps,
-                            added_cond_kwargs=added_cond_kwargs,
-                            return_dict=False,
-                        )[0]
-                        model_pred = model_pred.chunk(2, dim=1)[0]
-                    elif unet is not None:
-                        if args.legacy:
-                            # SD 1.5 or 2.x
-                            model_pred = unet(
+                        elif args.aura_flow:
+                            # AuraFlow also uses a MM-DiT model where the VAE-produced
+                            #  image embeds are passed in with the TE-produced text embeds.
+                            # Print the dtypes/shapes:
+                            model_pred = transformer(
+                                hidden_states=noisy_latents,
+                                encoder_hidden_states=encoder_hidden_states,
+                                timestep=timesteps,
+                                return_dict=False,
+                            )[0]
+                        elif args.pixart_sigma:
+                            model_pred = transformer(
                                 noisy_latents,
-                                timesteps,
-                                encoder_hidden_states,
-                            ).sample
-                        else:
-                            # SDXL, Kolors, other default unet prediction.
-                            model_pred = unet(
-                                noisy_latents,
-                                timesteps,
-                                encoder_hidden_states,
+                                encoder_hidden_states=encoder_hidden_states,
+                                encoder_attention_mask=batch["encoder_attention_mask"],
+                                timestep=timesteps,
                                 added_cond_kwargs=added_cond_kwargs,
-                            ).sample
-                    else:
-                        raise Exception(
-                            "Unknown error occurred, no prediction could be made."
-                        )
+                                return_dict=False,
+                            )[0]
+                            model_pred = model_pred.chunk(2, dim=1)[0]
+                        elif unet is not None:
+                            if args.legacy:
+                                model_pred = unet(
+                                    noisy_latents,
+                                    timesteps,
+                                    encoder_hidden_states,
+                                ).sample
+                            else:
+                                model_pred = unet(
+                                    noisy_latents,
+                                    timesteps,
+                                    encoder_hidden_states,
+                                    added_cond_kwargs=added_cond_kwargs,
+                                ).sample
+                        else:
+                            raise Exception(
+                                "Unknown error occurred, no prediction could be made."
+                            )
                 else:
                     # Dummy model prediction for debugging.
                     model_pred = torch.randn_like(noisy_latents)
@@ -1971,14 +1987,34 @@ def main():
                         weighting = 2 / (math.pi * bot)
                     else:
                         weighting = torch.ones_like(sigmas)
-                    loss = torch.mean(
-                        (
-                            weighting.float()
-                            * (model_pred.float() - target.float()) ** 2
-                        ).reshape(target.shape[0], -1),
-                        1,
-                    )
-                    loss = loss.mean()
+                    
+                    if args.sd3_loss_type == "mse":
+                        mae_loss = torch.abs(model_pred.float() - target.float()).mean() # for logging
+                        loss = torch.mean(
+                            (
+                                weighting.float() * ((model_pred.float() - target.float()) ** 2)
+                            ).reshape(target.shape[0], -1), 1,
+                        ).mean()
+                    elif args.sd3_loss_type == "mae":
+                        loss = torch.mean(
+                            (
+                                weighting.float() * (torch.abs(model_pred.float() - target.float()))
+                            ).reshape(target.shape[0], -1), 1,
+                        ).mean()
+                    else:
+                        mae_loss = torch.abs(model_pred.float() - target.float()).mean()
+                        if mae_loss < args.huber_delta:
+                            loss = torch.mean(
+                                (
+                                    weighting.float() * (0.5 * (model_pred.float() - target.float()) ** 2)
+                                ).reshape(target.shape[0], -1), 1,
+                            ).mean()
+                        else:
+                            loss = torch.mean(
+                                (
+                                    weighting.float() * (args.huber_delta * (torch.abs(model_pred.float() - target.float()) - 0.5 * args.huber_delta))
+                                ).reshape(target.shape[0], -1), 1,
+                            ).mean()
 
                 elif args.snr_gamma is None or args.snr_gamma == 0:
                     training_logger.debug("Calculating loss")
@@ -2078,6 +2114,8 @@ def main():
                 }
                 if grad_norm is not None:
                     logs["grad_norm"] = grad_norm
+                if mae_loss is not None:
+                    logs["mae_loss"] = mae_loss
                 progress_bar.update(1)
                 global_step += 1
                 current_epoch_step += 1

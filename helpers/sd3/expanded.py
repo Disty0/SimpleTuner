@@ -49,7 +49,7 @@ class JointTransformerBlock(nn.Module):
         num_attention_heads,
         attention_head_dim,
         context_pre_only=False,
-        qk_norm="layer_norm",
+        qk_norm="rms_norm_across_heads",
     ):
         super().__init__()
 
@@ -200,7 +200,7 @@ class SD3TransformerQKNorm2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, Fro
         pooled_projection_dim: int = 2048,
         out_channels: int = 16,
         pos_embed_max_size: int = 96,
-        qk_norm: str|None="layer_norm",
+        qk_norm: str|None="rms_norm_across_heads",
     ):
         super().__init__()
         default_out_channels = in_channels
@@ -533,7 +533,7 @@ def expand_existing_sd3_model(model_old):
         "patch_size": 2,
         "pooled_projection_dim": 2048,
         "pos_embed_max_size": 192,
-        "qk_norm": "layer_norm",
+        "qk_norm": "rms_norm_across_heads",
         "sample_size": 128,
     })
 

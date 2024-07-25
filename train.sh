@@ -26,6 +26,11 @@ if [ -z "${MIXED_PRECISION}" ]; then
     MIXED_PRECISION=bf16
 fi
 
+if [ -z "${WEIGHT_PRECISION}" ]; then
+    printf "WEIGHT_PRECISION not set, defaulting to bf16.\n"
+    WEIGHT_PRECISION=bf16
+fi
+
 export PURE_BF16_ARGS=""
 if ! [ -z "$PURE_BF16" ] && [[ "$PURE_BF16" == "true" ]]; then
     PURE_BF16_ARGS="--adam_bfloat16"
@@ -320,7 +325,7 @@ accelerate launch ${ACCELERATE_EXTRA_ARGS} --mixed_precision="${MIXED_PRECISION}
     ${OPTIMIZER_ARG} --learning_rate="${LEARNING_RATE}" --lr_scheduler="${LR_SCHEDULE}" --seed "${TRAINING_SEED}" --lr_warmup_steps="${LR_WARMUP_STEPS}" \
     --output_dir="${OUTPUT_DIR}" ${BITFIT_ARGS} ${ASPECT_BUCKET_ROUNDING_ARGS} \
     --inference_scheduler_timestep_spacing="${INFERENCE_SCHEDULER_TIMESTEP_SPACING}" --training_scheduler_timestep_spacing="${TRAINING_SCHEDULER_TIMESTEP_SPACING}" \
-    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" ${TRAINER_EXTRA_ARGS} \
+    ${DEBUG_EXTRA_ARGS}	${TF32_ARG} --mixed_precision="${MIXED_PRECISION}" --weight_precision="${WEIGHT_PRECISION}" ${TRAINER_EXTRA_ARGS} \
     --train_batch="${TRAIN_BATCH_SIZE}" --caption_dropout_probability=${CAPTION_DROPOUT_PROBABILITY} \
     --validation_prompt="${VALIDATION_PROMPT}" --num_validation_images=1 --validation_num_inference_steps="${VALIDATION_NUM_INFERENCE_STEPS}" ${VALIDATION_ARGS} \
     --minimum_image_size="${MINIMUM_RESOLUTION}" --resolution="${RESOLUTION}" --validation_resolution="${VALIDATION_RESOLUTION}" \

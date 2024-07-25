@@ -204,6 +204,17 @@ class LocalDataBackend(BaseDataBackend):
         else:
             location = original_location
 
+        if isinstance(data, torch.Tensor):
+            data = data.to(dtype=torch.float16).clone()
+        elif len(data) > 0 and isinstance(data[0], torch.Tensor):
+            new_data = []
+            for i in range(len(data)):
+                if isinstance(data[i], torch.Tensor):
+                    new_data.append(data[i].to(dtype=torch.float16).clone())
+                else:
+                    new_data.append(data[i])
+            data = new_data
+
         if self.compress_cache:
             compressed_data = self._compress_torch(data)
             location.write(compressed_data)

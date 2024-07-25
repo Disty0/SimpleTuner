@@ -106,7 +106,7 @@ def parse_args(input_args=None):
         "--flow_matching_loss",
         type=str,
         choices=["diffusers", "compatible", "diffusion"],
-        default="diffusers",
+        default="compatible",
         help=(
             "A discrepancy exists between the Diffusers implementation of flow matching and the minimal implementations provided"
             " by StabilityAI and AuraFlow. This experimental option allows switching loss calculations to be compatible with those."
@@ -181,10 +181,27 @@ def parse_args(input_args=None):
         ),
     )
     parser.add_argument(
+        "--sd3_loss_type",
+        type=str,
+        default="mse",
+        choices=["mse", "mae", "huber"],
+        help=(
+            "Loss type for Stable Diffusion 3"
+        ),
+    )
+    parser.add_argument(
+        "--huber_delta",
+        type=float,
+        default=0.2,
+        help=(
+            "Switching point used for Huber Loss"
+        ),
+    )
+    parser.add_argument(
         "--weighting_scheme",
         type=str,
         default="none",
-        choices=["sigma_sqrt", "logit_normal", "mode", "none"],
+        choices=["sigma_sqrt", "logit_normal", "mode", "cosmap", "none"],
         help=(
             "Stable Diffusion 3 used either uniform sampling of timesteps with post-prediction loss weighting, or"
             " a weighted timestep selection by mode or log-normal distribution. The default for SD3 is logit_normal, though"
@@ -433,6 +450,16 @@ def parse_args(input_args=None):
         help=(
             "If set, will rescale the betas to zero terminal SNR. This is recommended for training with v_prediction."
             " For epsilon, this might help with fine details, but will not result in contrast improvements."
+        ),
+    )
+    parser.add_argument(
+        "--te_dtype",
+        type=str,
+        default="bf16",
+        choices=["default", "fp16", "fp32", "bf16"],
+        required=False,
+        help=(
+            "The dtype of the Text Encoder model. Choose between ['default', 'fp16', 'fp32', 'bf16']."
         ),
     )
     parser.add_argument(
@@ -1327,7 +1354,7 @@ def parse_args(input_args=None):
         "--mixed_precision",
         type=str,
         default="bf16",
-        choices=["bf16", "no"],
+        choices=["fp16", "bf16", "no"],
         help=(
             "SimpleTuner only supports bf16 training. Bf16 requires PyTorch >="
             " 1.10. on an Nvidia Ampere or later GPU, and PyTorch 2.3 or newer for Apple Silicon."
@@ -1344,6 +1371,15 @@ def parse_args(input_args=None):
             "One of the hallmark discoveries of the Llama 3.1 paper is numeric instability when calculating"
             " gradients in bf16 precision. The default behaviour when gradient accumulation steps are enabled"
             " is now to use fp32 gradients, which is slower, but provides more accurate updates."
+        ),
+    )
+    parser.add_argument(
+        "--weight_precision",
+        type=str,
+        default="bf16",
+        choices=["fp32", "fp16", "bf16"],
+        help=(
+            "dtype used to store the model weights"
         ),
     )
     parser.add_argument(
@@ -1684,29 +1720,6 @@ def parse_args(input_args=None):
             f"When using --resolution_type=pixel, --target_downsample_size must be at least 512 pixels. You may have accidentally entered {args.target_downsample_size} megapixels, instead of pixels."
         )
 
-    if not args.adam_bfloat16 and not args.i_know_what_i_am_doing:
-        raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
-        )
-
-    if not args.i_know_what_i_am_doing and (
-        args.use_prodigy_optimizer
-        or args.use_dadapt_optimizer
-        or args.use_adafactor_optimizer
-        or args.use_8bit_adam
-    ):
-        raise ValueError(
-            "SimpleTuner does not use torch AMP (autocast/automatic mixed precision) to ensure precise results."
-            " Instead, stochastic rounding with bfloat16 is used to ensure that the model is trained with the highest precision."
-            " Additionally, this allows the weights to be stored in memory in bf16 instead of fp32, which saves VRAM."
-            f"{' For Apple Silicon users, the latest pytorch 2.3 or nightly build are required for bfloat16 support.' if torch.backends.mps.is_available() else ''}"
-            " Currently, only the AdamW optimizer supports bfloat16 training. Please set --adam_bfloat16 to true, or set --i_know_what_i_am_doing."
-        )
-
     if torch.backends.mps.is_available():
         if not args.unet_attention_slice and not args.legacy:
             warning_log(
@@ -1825,51 +1838,8 @@ def parse_args(input_args=None):
             )
             args.disable_compel = True
 
-    t5_max_length = 120
-    if args.aura_flow and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating Pile-T5 tokeniser max length to {t5_max_length} for AuraFlow."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- T5 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
-    t5_max_length = 77
-    if args.sd3 and (
-        args.tokenizer_max_length is None
-        or int(args.tokenizer_max_length) > t5_max_length
-    ):
-        if not args.i_know_what_i_am_doing:
-            warning_log(
-                f"Updating T5 XXL tokeniser max length to {t5_max_length} for SD3."
-            )
-            args.tokenizer_max_length = t5_max_length
-        else:
-            warning_log(
-                f"-!- SD3 supports a max length of {t5_max_length} tokens, but you have supplied `--i_know_what_i_am_doing`, so this limit will not be enforced. -!-"
-            )
-            warning_log(
-                f"Your outputs will possibly look incoherent if the model you are continuing from has not been tuned beyond {t5_max_length} tokens."
-            )
-
     if args.use_ema and args.ema_cpu_only:
         args.ema_device = "cpu"
-
-    if not args.i_know_what_i_am_doing:
-        if args.pixart_sigma or args.sd3 or args.aura_flow:
-            if args.max_grad_norm is None or float(args.max_grad_norm) > 0.01:
-                warning_log(
-                    f"{'PixArt Sigma' if args.pixart_sigma else 'Stable Diffusion 3'} requires --max_grad_norm=0.01 to prevent model collapse. Overriding value. Set this value manually to disable this warning."
-                )
-                args.max_grad_norm = 0.01
 
     if args.gradient_accumulation_steps > 1:
         if args.gradient_precision == "unmodified" or args.gradient_precision is None:
